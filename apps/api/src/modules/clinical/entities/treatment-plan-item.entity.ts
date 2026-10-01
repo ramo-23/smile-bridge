@@ -21,8 +21,8 @@ export class TreatmentPlanItemEntity {
   @Column('smallint', { name: 'tooth_number', nullable: true })
   toothNumber!: number | null;
 
-  @Column('text', { nullable: true })
-  description!: string | null;
+  @Column('bytea', { nullable: true })
+  description!: Buffer | null;
 
   @Column('bigint', { name: 'price_cents' })
   priceCents!: string;

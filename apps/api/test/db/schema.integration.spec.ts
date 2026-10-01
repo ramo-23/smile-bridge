@@ -13,6 +13,7 @@ import { SettingsAudit1700000000009 } from '../../src/database/migrations/170000
 import { Triggers1700000000010 } from '../../src/database/migrations/1700000000010-triggers';
 import { UpdatedAtTriggers1700000000011 } from '../../src/database/migrations/1700000000011-updated-at';
 import { Sessions1700000000012 } from '../../src/database/migrations/1700000000012-sessions';
+import { ClinicalEncrypted1700000000013 } from '../../src/database/migrations/1700000000013-clinical-encrypted';
 import { databaseEntities } from '../../src/database/entities';
 import { SnakeCaseNamingStrategy } from '../../src/database/snake-case-naming.strategy';
 
@@ -56,6 +57,7 @@ const testDataSource = new DataSource({
     Triggers1700000000010,
     UpdatedAtTriggers1700000000011,
     Sessions1700000000012,
+    ClinicalEncrypted1700000000013,
   ],
   synchronize: false,
 });
@@ -233,7 +235,7 @@ beforeAll(async () => {
   await testDataSource.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
 
   const migrations = await testDataSource.runMigrations();
-  expect(migrations).toHaveLength(12);
+  expect(migrations).toHaveLength(13);
 });
 
 afterAll(async () => {
@@ -466,9 +468,9 @@ describe('PostgreSQL schema integration', () => {
     const [before] = await testDataSource.query(
       'SELECT COUNT(*)::integer AS count FROM migrations',
     );
-    expect(before.count).toBe(12);
+    expect(before.count).toBe(13);
 
-    for (let index = 0; index < 12; index += 1) {
+    for (let index = 0; index < 13; index += 1) {
       await testDataSource.undoLastMigration();
     }
 
@@ -486,9 +488,9 @@ describe('PostgreSQL schema integration', () => {
     expect(enums).toHaveLength(0);
 
     const reapplied = await testDataSource.runMigrations();
-    expect(reapplied).toHaveLength(12);
+    expect(reapplied).toHaveLength(13);
 
     const [final] = await testDataSource.query('SELECT COUNT(*)::integer AS count FROM migrations');
-    expect(final.count).toBe(12);
+    expect(final.count).toBe(13);
   });
 });

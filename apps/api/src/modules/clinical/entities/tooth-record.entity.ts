@@ -28,8 +28,8 @@ export class ToothRecordEntity {
   @Column('text', { name: 'condition_code' })
   conditionCode!: string;
 
-  @Column('text', { nullable: true })
-  note!: string | null;
+  @Column('bytea', { nullable: true })
+  note!: Buffer | null;
 
   @ManyToOne(() => AppointmentEntity, { nullable: true })
   @JoinColumn({ name: 'appointment_id' })

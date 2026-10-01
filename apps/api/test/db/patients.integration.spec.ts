@@ -22,6 +22,7 @@ import { SettingsAudit1700000000009 } from '../../src/database/migrations/170000
 import { Triggers1700000000010 } from '../../src/database/migrations/1700000000010-triggers';
 import { UpdatedAtTriggers1700000000011 } from '../../src/database/migrations/1700000000011-updated-at';
 import { Sessions1700000000012 } from '../../src/database/migrations/1700000000012-sessions';
+import { ClinicalEncrypted1700000000013 } from '../../src/database/migrations/1700000000013-clinical-encrypted';
 
 const originalTimezone = process.env.TZ;
 process.env.TZ = 'Pacific/Kiritimati';
@@ -60,6 +61,7 @@ const testDataSource = new DataSource({
     Triggers1700000000010,
     UpdatedAtTriggers1700000000011,
     Sessions1700000000012,
+    ClinicalEncrypted1700000000013,
   ],
   synchronize: false,
 });
