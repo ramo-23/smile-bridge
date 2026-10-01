@@ -1,5 +1,17 @@
 import { Transform, Type, plainToInstance } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsString, Max, Min, validateSync } from 'class-validator';
+import {
+  IsBase64,
+  IsBoolean,
+  IsDefined,
+  IsIn,
+  IsInt,
+  IsString,
+  Matches,
+  Max,
+  Min,
+  validateSync,
+} from 'class-validator';
+import { isSupportedCountry } from 'libphonenumber-js';
 
 class EnvironmentVariables {
   @IsIn(['development', 'production', 'test'])
@@ -13,6 +25,15 @@ class EnvironmentVariables {
 
   @IsString()
   CORS_ORIGIN = 'http://localhost:5173';
+
+  @IsString()
+  @Matches(/^[A-Z]{2}$/)
+  DEFAULT_PHONE_REGION!: string;
+
+  @IsDefined()
+  @IsString()
+  @IsBase64()
+  ENCRYPTION_KEY!: string;
 
   @IsString()
   DB_HOST = 'localhost';
@@ -59,6 +80,18 @@ export function validateEnvironment(environment: Record<string, unknown>): Envir
     throw new Error(
       errors.map((error) => Object.values(error.constraints ?? {}).join(', ')).join('; '),
     );
+  }
+
+  if (!isSupportedCountry(validated.DEFAULT_PHONE_REGION)) {
+    throw new Error('DEFAULT_PHONE_REGION must be a supported ISO 3166-1 alpha-2 country code');
+  }
+
+  const encryptionKey = Buffer.from(validated.ENCRYPTION_KEY, 'base64');
+  if (
+    encryptionKey.length !== 32 ||
+    encryptionKey.toString('base64') !== validated.ENCRYPTION_KEY
+  ) {
+    throw new Error('ENCRYPTION_KEY must be canonical base64 encoding of exactly 32 bytes');
   }
 
   return validated;

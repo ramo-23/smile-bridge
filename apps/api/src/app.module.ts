@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { resolve } from 'node:path';
+import './database/postgres-date-parser';
 import { databaseEntities } from './database/entities';
 import { SnakeCaseNamingStrategy } from './database/snake-case-naming.strategy';
 import { validateEnvironment } from './config/env.validation';

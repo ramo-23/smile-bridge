@@ -1,6 +1,7 @@
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 import { DataSource } from 'typeorm';
+import './postgres-date-parser';
 import { databaseEntities } from './entities';
 import { SnakeCaseNamingStrategy } from './snake-case-naming.strategy';
 
