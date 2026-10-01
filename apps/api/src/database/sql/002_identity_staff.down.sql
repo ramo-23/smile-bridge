@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS blocked_periods;
+DROP TABLE IF EXISTS working_hours;
+DROP TABLE IF EXISTS providers;
+DROP TABLE IF EXISTS users;

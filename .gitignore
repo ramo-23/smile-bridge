@@ -1,0 +1,40 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+
+# Local editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.tmp
+*.temp
+
+# Tool and test caches/reports
+.cache/
+.eslintcache
+.parcel-cache/
+.turbo/
+.next/
+.nuxt/
+.output/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Local database exports and backups
+*.dump
+*.backup
+*.sql.gz

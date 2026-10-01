@@ -1,0 +1,19 @@
+DROP TYPE IF EXISTS severity_level;
+DROP TYPE IF EXISTS claim_status;
+DROP TYPE IF EXISTS payment_method;
+DROP TYPE IF EXISTS invoice_status;
+DROP TYPE IF EXISTS attachment_kind;
+DROP TYPE IF EXISTS plan_status;
+DROP TYPE IF EXISTS tooth_record_type;
+DROP TYPE IF EXISTS tooth_surface;
+DROP TYPE IF EXISTS message_status;
+DROP TYPE IF EXISTS message_channel;
+DROP TYPE IF EXISTS message_kind;
+DROP TYPE IF EXISTS request_status;
+DROP TYPE IF EXISTS appointment_source;
+DROP TYPE IF EXISTS appointment_status;
+DROP TYPE IF EXISTS user_role;
+
+DROP EXTENSION IF EXISTS citext;
+DROP EXTENSION IF EXISTS pg_trgm;
+DROP EXTENSION IF EXISTS btree_gist;

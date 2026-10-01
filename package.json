@@ -1,0 +1,44 @@
+{
+  "name": "smile-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace @smile-bridge/api",
+    "dev:web": "npm run dev --workspace @smile-bridge/web",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "migration:run": "npm run migration:run --workspace @smile-bridge/api",
+    "migration:revert": "npm run migration:revert --workspace @smile-bridge/api",
+    "user:create-owner": "npm run user:create-owner --workspace @smile-bridge/api",
+    "test:db": "npm run test:db --workspace @smile-bridge/api",
+    "migration:generate": "npm run migration:generate --workspace @smile-bridge/api --",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,json,css,md,yml,yaml}": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@typescript-eslint/parser": "^8.46.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.0",
+    "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.3",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0"
+  }
+}
