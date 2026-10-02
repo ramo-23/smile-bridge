@@ -259,6 +259,74 @@ describe('clinical records', () => {
     expect(chart.body.teeth[14].surfaces.occlusal.inactive).toBe(true);
   });
 
+  it('rejects a surface record on a tooth currently extracted, and creates nothing', async () => {
+    await createToothRecord({ toothNumber: 16, surface: null, recordType: 'finding', conditionCode: 'extracted' });
+    const rejected = await owner(http.post(`/patients/${patientId}/tooth-records`))
+      .send({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' })
+      .expect(409);
+    expect(rejected.body.message).toBe('Tooth 16 is extracted. Void that record before charting surfaces.');
+
+    const [{ count }] = await testDataSource.query(
+      `SELECT count(*)::int AS count FROM tooth_records WHERE patient_id = $1 AND tooth_number = 16 AND surface IS NOT NULL`,
+      [patientId],
+    );
+    expect(count).toBe(0);
+    const chart = await owner(http.get(`/patients/${patientId}/odontogram`)).expect(200);
+    expect(chart.body.teeth[15].surfaces.occlusal).toBeNull();
+    const history = await owner(http.get(`/patients/${patientId}/teeth/16/history`)).expect(200);
+    expect(history.body).toHaveLength(1);
+  });
+
+  it('rejects a surface record on a tooth currently missing, and creates nothing', async () => {
+    await createToothRecord({ toothNumber: 16, surface: null, recordType: 'finding', conditionCode: 'missing' });
+    const rejected = await owner(http.post(`/patients/${patientId}/tooth-records`))
+      .send({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' })
+      .expect(409);
+    expect(rejected.body.message).toBe('Tooth 16 is missing. Void that record before charting surfaces.');
+
+    const [{ count }] = await testDataSource.query(
+      `SELECT count(*)::int AS count FROM tooth_records WHERE patient_id = $1 AND tooth_number = 16 AND surface IS NOT NULL`,
+      [patientId],
+    );
+    expect(count).toBe(0);
+    const chart = await owner(http.get(`/patients/${patientId}/odontogram`)).expect(200);
+    expect(chart.body.teeth[15].surfaces.occlusal).toBeNull();
+  });
+
+  it('allows a whole-tooth record on an extracted tooth, and surfaces become writable again once it is the current state', async () => {
+    await createToothRecord({ toothNumber: 16, surface: null, recordType: 'finding', conditionCode: 'extracted' });
+    await createToothRecord({ toothNumber: 16, surface: null, recordType: 'finding', conditionCode: 'implant' });
+    await createToothRecord({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' });
+  });
+
+  it('allows surface records again after the extraction is voided', async () => {
+    const extraction = await createToothRecord({
+      toothNumber: 16,
+      surface: null,
+      recordType: 'finding',
+      conditionCode: 'extracted',
+    });
+    await owner(http.post(`/tooth-records/${extraction.body.id}/void`)).send({ reason: 'Charted in error' }).expect(201);
+    await createToothRecord({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' });
+  });
+
+  it('still allows a surface record on a different tooth that is not extracted', async () => {
+    await createToothRecord({ toothNumber: 16, surface: null, recordType: 'finding', conditionCode: 'extracted' });
+    await createToothRecord({ toothNumber: 14, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' });
+  });
+
+  it('still allows charting extracted on a tooth that already has surface records', async () => {
+    await createToothRecord({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' });
+    await createToothRecord({ toothNumber: 16, surface: null, recordType: 'finding', conditionCode: 'extracted' });
+  });
+
+  it('returns 403, not 409, when a receptionist charts a surface record on an extracted tooth', async () => {
+    await createToothRecord({ toothNumber: 16, surface: null, recordType: 'finding', conditionCode: 'extracted' });
+    await receptionist(http.post(`/patients/${patientId}/tooth-records`))
+      .send({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' })
+      .expect(403);
+  });
+
   it('rejects invalid tooth numbers, codes, surfaces, and appointments belonging to another patient', async () => {
     for (const toothNumber of [0, 33]) {
       await owner(http.post(`/patients/${patientId}/tooth-records`))

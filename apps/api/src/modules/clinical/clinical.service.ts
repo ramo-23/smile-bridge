@@ -72,6 +72,15 @@ export class ClinicalService {
 		return this.dataSource.transaction(async (manager) => {
 			await this.requirePatient(manager, patientId);
 			if (dto.appointmentId) await this.requirePatientAppointment(manager, patientId, dto.appointmentId);
+			if (dto.surface != null) {
+				const wholeTooth = await this.getLatestWholeToothRecord(manager, patientId, dto.toothNumber);
+				if (this.isSurfacesInactive(wholeTooth?.conditionCode)) {
+					const state = wholeTooth!.conditionCode === ToothConditionCode.Extracted ? 'extracted' : 'missing';
+					throw new ConflictException(
+						`Tooth ${dto.toothNumber} is ${state}. Void that record before charting surfaces.`,
+					);
+				}
+			}
 			const repository = manager.getRepository(ToothRecordEntity);
 			const record = await repository.save({
 				patient: { id: patientId } as PatientEntity,
@@ -138,9 +147,7 @@ export class ClinicalService {
 				const surfaces = Object.fromEntries(
 					SURFACES.map((surface) => {
 						const record = toothRecords.find((entry: { surface: ToothSurface | null }) => entry.surface === surface);
-						const inactive =
-							wholeTooth?.conditionCode === ToothConditionCode.Extracted ||
-							wholeTooth?.conditionCode === ToothConditionCode.Missing;
+						const inactive = this.isSurfacesInactive(wholeTooth?.conditionCode);
 						return [
 							surface,
 							record
@@ -164,9 +171,7 @@ export class ClinicalService {
 							}
 						: null,
 					surfaces,
-					surfacesInactive:
-						wholeTooth?.conditionCode === ToothConditionCode.Extracted ||
-						wholeTooth?.conditionCode === ToothConditionCode.Missing,
+					surfacesInactive: this.isSurfacesInactive(wholeTooth?.conditionCode),
 				};
 			});
 			await this.recordAudit(manager, actor, 'clinical.odontogram.view', patientId, null, {
@@ -516,6 +521,23 @@ export class ClinicalService {
 		});
 		if (!appointment) throw new BadRequestException('Appointment must belong to the same patient');
 		return appointment;
+	}
+
+	// Shared by the write path and the odontogram read model so the rule cannot drift between them.
+	private isSurfacesInactive(conditionCode: string | null | undefined): boolean {
+		return conditionCode === ToothConditionCode.Extracted || conditionCode === ToothConditionCode.Missing;
+	}
+
+	private async getLatestWholeToothRecord(manager: EntityManager, patientId: string, toothNumber: number) {
+		const [record] = await manager.query(
+			`SELECT condition_code AS "conditionCode"
+			 FROM tooth_records
+			 WHERE patient_id = $1 AND tooth_number = $2 AND surface IS NULL AND voided_at IS NULL
+			 ORDER BY recorded_at DESC, id DESC
+			 LIMIT 1`,
+			[patientId, toothNumber],
+		);
+		return (record as { conditionCode: string } | undefined) ?? null;
 	}
 
 	private assertText(value: string, label: string, maxLength: number) {
