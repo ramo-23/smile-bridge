@@ -14,6 +14,7 @@ import { Triggers1700000000010 } from '../../src/database/migrations/17000000000
 import { UpdatedAtTriggers1700000000011 } from '../../src/database/migrations/1700000000011-updated-at';
 import { Sessions1700000000012 } from '../../src/database/migrations/1700000000012-sessions';
 import { ClinicalEncrypted1700000000013 } from '../../src/database/migrations/1700000000013-clinical-encrypted';
+import { DocumentCounters1700000000014 } from '../../src/database/migrations/1700000000014-document-counters';
 import { databaseEntities } from '../../src/database/entities';
 import { SnakeCaseNamingStrategy } from '../../src/database/snake-case-naming.strategy';
 
@@ -58,6 +59,7 @@ const testDataSource = new DataSource({
     UpdatedAtTriggers1700000000011,
     Sessions1700000000012,
     ClinicalEncrypted1700000000013,
+    DocumentCounters1700000000014,
   ],
   synchronize: false,
 });
@@ -235,7 +237,7 @@ beforeAll(async () => {
   await testDataSource.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
 
   const migrations = await testDataSource.runMigrations();
-  expect(migrations).toHaveLength(13);
+  expect(migrations).toHaveLength(14);
 });
 
 afterAll(async () => {
@@ -399,6 +401,64 @@ describe('PostgreSQL schema integration', () => {
     ).rejects.toThrow(/cannot add lines to an issued invoice/);
   });
 
+  it('allows draft edits, line deletes, draft deletes and the draft to issued transition', async () => {
+    const { invoiceId, lineId } = await createInvoiceFixture('draft');
+    await testDataSource.query(`UPDATE invoices SET total_cents = 5 WHERE id = $1`, [invoiceId]);
+    await testDataSource.query(`UPDATE invoice_lines SET description = 'Edited' WHERE id = $1`, [lineId]);
+    await testDataSource.query('DELETE FROM invoice_lines WHERE id = $1', [lineId]);
+    await testDataSource.query(
+      `UPDATE invoices SET invoice_number = $1, status = 'issued', issued_at = now() WHERE id = $2`,
+      [`INV-${uniqueToken()}`, invoiceId],
+    );
+    const draft = await createInvoiceFixture('draft');
+    await testDataSource.query('DELETE FROM invoice_lines WHERE invoice_id = $1', [draft.invoiceId]);
+    await testDataSource.query('DELETE FROM invoices WHERE id = $1', [draft.invoiceId]);
+  });
+
+  it('rejects moving a draft line onto an issued invoice', async () => {
+    const draft = await createInvoiceFixture('draft');
+    const issued = await createInvoiceFixture('issued');
+    await expect(
+      testDataSource.query('UPDATE invoice_lines SET invoice_id = $1 WHERE id = $2', [
+        issued.invoiceId,
+        draft.lineId,
+      ]),
+    ).rejects.toThrow(/cannot add lines to an issued invoice/);
+  });
+
+  it('seeds the document counters and rejects a negative counter', async () => {
+    const rows = await testDataSource.query(
+      `SELECT name FROM document_counters WHERE name IN ('invoice', 'credit_note') ORDER BY name`,
+    );
+    expect(rows.map((row: { name: string }) => row.name)).toEqual(['credit_note', 'invoice']);
+    await expect(
+      testDataSource.query(`UPDATE document_counters SET last_value = -1 WHERE name = 'invoice'`),
+    ).rejects.toThrow(/document_counters_last_value_check/);
+  });
+
+  it('rejects UPDATE and DELETE on payments and credit notes', async () => {
+    const { invoiceId } = await createInvoiceFixture('issued');
+    const [invoice] = await testDataSource.query('SELECT created_by FROM invoices WHERE id = $1', [invoiceId]);
+    const [payment] = await testDataSource.query(
+      `INSERT INTO payments (invoice_id, method, amount_cents, received_by)
+       VALUES ($1, 'cash', 100, $2) RETURNING id`,
+      [invoiceId, invoice.created_by],
+    );
+    const [note] = await testDataSource.query(
+      `INSERT INTO credit_notes (credit_note_number, invoice_id, amount_cents, reason, created_by)
+       VALUES ($1, $2, 100, 'test', $3) RETURNING id`,
+      [`CN-${uniqueToken()}`, invoiceId, invoice.created_by],
+    );
+    for (const [table, id] of [['payments', payment.id], ['credit_notes', note.id]]) {
+      await expect(
+        testDataSource.query(`UPDATE ${table} SET amount_cents = 200 WHERE id = $1`, [id]),
+      ).rejects.toThrow(/append-only/);
+      await expect(testDataSource.query(`DELETE FROM ${table} WHERE id = $1`, [id])).rejects.toThrow(
+        /append-only/,
+      );
+    }
+  });
+
   it('allows UPDATE and DELETE on draft invoices and their lines', async () => {
     const { invoiceId, lineId } = await createInvoiceFixture('draft');
 
@@ -468,9 +528,9 @@ describe('PostgreSQL schema integration', () => {
     const [before] = await testDataSource.query(
       'SELECT COUNT(*)::integer AS count FROM migrations',
     );
-    expect(before.count).toBe(13);
+    expect(before.count).toBe(14);
 
-    for (let index = 0; index < 13; index += 1) {
+    for (let index = 0; index < 14; index += 1) {
       await testDataSource.undoLastMigration();
     }
 
@@ -488,9 +548,9 @@ describe('PostgreSQL schema integration', () => {
     expect(enums).toHaveLength(0);
 
     const reapplied = await testDataSource.runMigrations();
-    expect(reapplied).toHaveLength(13);
+    expect(reapplied).toHaveLength(14);
 
     const [final] = await testDataSource.query('SELECT COUNT(*)::integer AS count FROM migrations');
-    expect(final.count).toBe(13);
+    expect(final.count).toBe(14);
   });
 });

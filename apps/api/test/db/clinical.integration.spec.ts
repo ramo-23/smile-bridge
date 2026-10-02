@@ -21,6 +21,7 @@ import { Triggers1700000000010 } from '../../src/database/migrations/17000000000
 import { UpdatedAtTriggers1700000000011 } from '../../src/database/migrations/1700000000011-updated-at';
 import { Sessions1700000000012 } from '../../src/database/migrations/1700000000012-sessions';
 import { ClinicalEncrypted1700000000013 } from '../../src/database/migrations/1700000000013-clinical-encrypted';
+import { DocumentCounters1700000000014 } from '../../src/database/migrations/1700000000014-document-counters';
 import { AuditService } from '../../src/modules/audit/audit.service';
 
 const testDatabase = process.env.DB_TEST_DATABASE;
@@ -58,6 +59,7 @@ const testDataSource = new DataSource({
     UpdatedAtTriggers1700000000011,
     Sessions1700000000012,
     ClinicalEncrypted1700000000013,
+    DocumentCounters1700000000014,
   ],
   synchronize: false,
 });
@@ -684,11 +686,17 @@ describe('clinical records', () => {
   it('hides database error details from 500 responses and logs the error server-side', async () => {
     const sqlText = 'SELECT SECRET_SQL_TEXT FROM private_table';
     const constraintName = 'SECRET_CONSTRAINT_NAME';
+    const patientName = 'PATIENT_NAME_PARAMETER_SENTINEL';
     const requestSentinel = 'REQUEST_BODY_SENTINEL';
     const databaseError = new QueryFailedError(
       sqlText,
-      ['SECRET_SQL_PARAMETER'],
-      new Error(`violates ${constraintName}`),
+      [patientName],
+      Object.assign(new Error(`violates ${constraintName}`), {
+        code: '23505',
+        constraint: constraintName,
+        table: 'patients',
+        column: 'first_name',
+      }),
     );
     const audit = app.get(AuditService);
     const auditSpy = jest.spyOn(audit, 'record').mockRejectedValueOnce(databaseError);
@@ -712,14 +720,21 @@ describe('clinical records', () => {
       const responseText = JSON.stringify(response.body);
       expect(responseText).not.toContain(sqlText);
       expect(responseText).not.toContain(constraintName);
-      expect(responseText).not.toContain('SECRET_SQL_PARAMETER');
+      expect(responseText).not.toContain(patientName);
       expect(responseText).not.toContain(requestSentinel);
 
       const loggedError = logSpy.mock.calls.flat().join(' ');
       expect(loggedError).toContain(sqlText);
       expect(loggedError).toContain(constraintName);
+      expect(loggedError).toContain('QueryFailedError');
+      expect(loggedError).toContain('stack');
+      expect(loggedError).toContain('23505');
+      expect(loggedError).toContain('patients');
+      expect(loggedError).toContain('first_name');
+      expect(loggedError).not.toContain(patientName);
       expect(loggedError).not.toContain(requestSentinel);
       expect(loggedError).not.toContain(ownerCookie);
+      expect(responseText).not.toContain('stack');
     } finally {
       auditSpy.mockRestore();
       logSpy.mockRestore();

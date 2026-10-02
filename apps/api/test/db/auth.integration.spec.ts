@@ -17,6 +17,7 @@ import { Triggers1700000000010 } from '../../src/database/migrations/17000000000
 import { UpdatedAtTriggers1700000000011 } from '../../src/database/migrations/1700000000011-updated-at';
 import { Sessions1700000000012 } from '../../src/database/migrations/1700000000012-sessions';
 import { ClinicalEncrypted1700000000013 } from '../../src/database/migrations/1700000000013-clinical-encrypted';
+import { DocumentCounters1700000000014 } from '../../src/database/migrations/1700000000014-document-counters';
 import { databaseEntities } from '../../src/database/entities';
 import { SnakeCaseNamingStrategy } from '../../src/database/snake-case-naming.strategy';
 import { AuditService } from '../../src/modules/audit/audit.service';
@@ -60,6 +61,7 @@ const testDataSource = new DataSource({
     UpdatedAtTriggers1700000000011,
     Sessions1700000000012,
     ClinicalEncrypted1700000000013,
+    DocumentCounters1700000000014,
   ],
   synchronize: false,
 });

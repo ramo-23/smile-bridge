@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { EncryptionService } from '../../common/encryption.service';
 import { AuditService } from '../audit/audit.service';
+import { BillingService } from '../billing/billing.service';
 import { PatientEntity } from '../patients/entities/patient.entity';
 import { AppointmentEntity } from '../scheduling/entities/appointment.entity';
 import { TreatmentTypeEntity } from '../scheduling/entities/treatment-type.entity';
@@ -58,6 +59,7 @@ export class ClinicalService {
 		private readonly treatmentTypes: Repository<TreatmentTypeEntity>,
 		private readonly encryption: EncryptionService,
 		private readonly audit: AuditService,
+		private readonly billing: BillingService,
 	) {}
 
 	async addToothRecord(patientId: string, dto: CreateToothRecordDto, actor: Actor) {
@@ -412,7 +414,10 @@ export class ClinicalService {
 		itemId: string,
 		status: PlanStatus,
 		actor: Actor,
+		appointmentId?: string,
 	) {
+		if (appointmentId !== undefined && status !== PlanStatus.Done)
+			throw new BadRequestException('appointmentId is only accepted when marking an item done');
 		return this.dataSource.transaction(async (manager) => {
 			const [locked] = await manager.query(
 				'SELECT id FROM treatment_plan_items WHERE id = $1 AND plan_id = $2 FOR UPDATE',
@@ -437,7 +442,17 @@ export class ClinicalService {
 				item.id,
 				{ fieldNames: ['status'], planId, itemId },
 			);
-			return { ...this.planItemView(saved), fromStatus };
+			if (appointmentId === undefined) return { ...this.planItemView(saved), fromStatus };
+			const performedTreatment = await this.billing.recordPerformedTreatment(manager, actor, {
+				appointmentId,
+				expectedPatientId: item.plan.patient.id,
+				treatmentTypeId: item.treatmentType.id,
+				toothNumber: item.toothNumber,
+				priceCents: Number(item.priceCents),
+				planItemId: item.id,
+				requireActiveType: false,
+			});
+			return { ...this.planItemView(saved), fromStatus, performedTreatment };
 		});
 	}
 

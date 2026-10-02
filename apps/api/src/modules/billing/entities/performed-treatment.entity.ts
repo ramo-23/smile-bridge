@@ -1,4 +1,5 @@
-import { Check, Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, JoinColumn, ManyToOne, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { TreatmentPlanItemEntity } from '../../clinical/entities/treatment-plan-item.entity';
 import { PatientEntity } from '../../patients/entities/patient.entity';
 import { AppointmentEntity } from '../../scheduling/entities/appointment.entity';
 import { TreatmentTypeEntity } from '../../scheduling/entities/treatment-type.entity';
@@ -22,6 +23,10 @@ export class PerformedTreatmentEntity {
   @ManyToOne(() => TreatmentTypeEntity, { nullable: false })
   @JoinColumn({ name: 'treatment_type_id' })
   treatmentType!: TreatmentTypeEntity;
+
+  @OneToOne(() => TreatmentPlanItemEntity, { nullable: true })
+  @JoinColumn({ name: 'plan_item_id' })
+  planItem!: TreatmentPlanItemEntity | null;
 
   @Column('smallint', { name: 'tooth_number', nullable: true })
   toothNumber!: number | null;

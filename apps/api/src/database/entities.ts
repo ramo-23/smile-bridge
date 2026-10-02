@@ -9,6 +9,7 @@ import { TreatmentPlanEntity } from '../modules/clinical/entities/treatment-plan
 import { TreatmentPlanItemEntity } from '../modules/clinical/entities/treatment-plan-item.entity';
 import { AttachmentEntity } from '../modules/files/entities/attachment.entity';
 import { CreditNoteEntity } from '../modules/billing/entities/credit-note.entity';
+import { DocumentCounterEntity } from '../modules/billing/entities/document-counter.entity';
 import { InvoiceEntity } from '../modules/billing/entities/invoice.entity';
 import { InvoiceLineEntity } from '../modules/billing/entities/invoice-line.entity';
 import { PaymentEntity } from '../modules/billing/entities/payment.entity';
@@ -53,6 +54,7 @@ export const databaseEntities = [
   TreatmentPlanItemEntity,
   AttachmentEntity,
   PerformedTreatmentEntity,
+  DocumentCounterEntity,
   InvoiceEntity,
   InvoiceLineEntity,
   PaymentEntity,

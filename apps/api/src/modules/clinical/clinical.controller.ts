@@ -141,7 +141,7 @@ export class ClinicalController {
 		@Body() body: UpdateTreatmentPlanItemStatusDto,
 		@Req() request: AuthenticatedRequest,
 	) {
-		return this.clinical.updateTreatmentPlanItemStatus(planId, itemId, body.status, this.actor(request));
+		return this.clinical.updateTreatmentPlanItemStatus(planId, itemId, body.status, this.actor(request), body.appointmentId);
 	}
 
 	@Get('patients/:id/treatment-plans')

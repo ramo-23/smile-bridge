@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EncryptionService } from '../../common/encryption.service';
 import { AuditModule } from '../audit/audit.module';
+import { BillingModule } from '../billing/billing.module';
 import { PatientEntity } from '../patients/entities/patient.entity';
 import { AppointmentEntity } from '../scheduling/entities/appointment.entity';
 import { TreatmentTypeEntity } from '../scheduling/entities/treatment-type.entity';
@@ -26,6 +27,7 @@ import { ClinicalService } from './clinical.service';
 			TreatmentPlanItemEntity,
 		]),
 		AuditModule,
+		BillingModule,
 	],
 	controllers: [ClinicalController],
 	providers: [ClinicalService, EncryptionService],

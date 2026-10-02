@@ -131,4 +131,8 @@ export class UpdateTreatmentPlanItemDto {
 export class UpdateTreatmentPlanItemStatusDto {
   @IsEnum(PlanStatus)
   status!: PlanStatus;
+
+  @IsOptional()
+  @IsUUID()
+  appointmentId?: string;
 }

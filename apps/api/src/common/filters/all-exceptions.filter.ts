@@ -7,7 +7,6 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { inspect } from 'node:util';
 
 const ERROR_NAMES: Record<number, string> = {
   400: 'Bad Request',
@@ -35,7 +34,31 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (!isHttpException) {
       const error = exception instanceof Error ? exception : new Error(String(exception));
-      this.logger.error(inspect(error, { depth: 5 }));
+      const fields = error as Error & {
+        code?: string;
+        constraint?: string;
+        table?: string;
+        column?: string;
+        query?: string;
+        driverError?: {
+          code?: string;
+          constraint?: string;
+          table?: string;
+          column?: string;
+        };
+      };
+      const driverError = fields.driverError;
+      const logRecord = {
+        exception: error.constructor.name,
+        message: error.message,
+        stack: error.stack,
+        code: fields.code ?? driverError?.code,
+        constraint: fields.constraint ?? driverError?.constraint,
+        table: fields.table ?? driverError?.table,
+        column: fields.column ?? driverError?.column,
+        sql: fields.query,
+      };
+      this.logger.error(JSON.stringify(logRecord));
     }
 
     if (typeof body === 'string') {
