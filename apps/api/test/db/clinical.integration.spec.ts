@@ -1,7 +1,7 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, Logger, ValidationPipe } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import * as argon2 from 'argon2';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryFailedError } from 'typeorm';
 import supertest from 'supertest';
 import '../../src/database/data-source';
 import { EncryptionService } from '../../src/common/encryption.service';
@@ -264,7 +264,7 @@ describe('clinical records', () => {
     const rejected = await owner(http.post(`/patients/${patientId}/tooth-records`))
       .send({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' })
       .expect(409);
-    expect(rejected.body.message).toBe('Tooth 16 is extracted. Void that record before charting surfaces.');
+    expect(rejected.body.message).toEqual(['Tooth 16 is extracted. Void that record before charting surfaces.']);
 
     const [{ count }] = await testDataSource.query(
       `SELECT count(*)::int AS count FROM tooth_records WHERE patient_id = $1 AND tooth_number = 16 AND surface IS NOT NULL`,
@@ -282,7 +282,7 @@ describe('clinical records', () => {
     const rejected = await owner(http.post(`/patients/${patientId}/tooth-records`))
       .send({ toothNumber: 16, surface: 'occlusal', recordType: 'finding', conditionCode: 'filling' })
       .expect(409);
-    expect(rejected.body.message).toBe('Tooth 16 is missing. Void that record before charting surfaces.');
+    expect(rejected.body.message).toEqual(['Tooth 16 is missing. Void that record before charting surfaces.']);
 
     const [{ count }] = await testDataSource.query(
       `SELECT count(*)::int AS count FROM tooth_records WHERE patient_id = $1 AND tooth_number = 16 AND surface IS NOT NULL`,
@@ -386,6 +386,29 @@ describe('clinical records', () => {
       note: 'APPEND_ONLY_NOTE',
       voidReason: 'APPEND_ONLY_VOID_REASON',
     });
+  });
+
+  it('returns the voided tooth record as a plain object, not an array', async () => {
+    const created = await createToothRecord({ note: 'PLAIN_OBJECT_VOID_NOTE' });
+    const voided = await owner(http.post(`/tooth-records/${created.body.id}/void`))
+      .send({ reason: 'Plain object check' })
+      .expect(201);
+    expect(Array.isArray(voided.body)).toBe(false);
+    expect(Object.keys(voided.body).sort()).toEqual(['id', 'voidReason', 'voidedAt']);
+    expect(voided.body).toMatchObject({
+      id: created.body.id,
+      voidReason: 'Plain object check',
+    });
+    expect(typeof voided.body.voidedAt).toBe('string');
+  });
+
+  it('records toothNumber on the clinical.tooth_history.view audit entry', async () => {
+    await createToothRecord({ toothNumber: 9, conditionCode: 'caries' });
+    await owner(http.get(`/patients/${patientId}/teeth/9/history`)).expect(200);
+    const [row] = await testDataSource.query(
+      `SELECT metadata FROM audit_log WHERE action = 'clinical.tooth_history.view' ORDER BY id DESC LIMIT 1`,
+    );
+    expect(row.metadata).toMatchObject({ patientId, toothNumber: 9 });
   });
 
   it('keeps encrypted clinical-note versions, decrypts reads, and serializes concurrent edits', async () => {
@@ -619,10 +642,16 @@ describe('clinical records', () => {
     for (const row of rows) {
       expect(row.patientId).toBe(patientId);
       for (const value of sentinel) expect(row.full_row).not.toContain(value);
-      expect(row.metadata).not.toHaveProperty('toothNumber');
+      if (row.action !== 'clinical.tooth_history.view') {
+        expect(row.metadata).not.toHaveProperty('toothNumber');
+      }
       expect(row.metadata).not.toHaveProperty('conditionCode');
       expect(row.metadata).not.toHaveProperty('reason');
     }
+    const historyRow = rows.find(
+      (row: { action: string }) => row.action === 'clinical.tooth_history.view',
+    );
+    expect(historyRow.metadata).toMatchObject({ toothNumber: 14 });
 
     const readerAudits = await testDataSource.query(
       `SELECT action, count(*)::int AS count FROM audit_log
@@ -650,5 +679,50 @@ describe('clinical records', () => {
       `SELECT count(*)::int AS count FROM audit_log WHERE action = 'clinical.odontogram.view'`,
     );
     expect(readCount.count).toBe(0);
+  });
+
+  it('hides database error details from 500 responses and logs the error server-side', async () => {
+    const sqlText = 'SELECT SECRET_SQL_TEXT FROM private_table';
+    const constraintName = 'SECRET_CONSTRAINT_NAME';
+    const requestSentinel = 'REQUEST_BODY_SENTINEL';
+    const databaseError = new QueryFailedError(
+      sqlText,
+      ['SECRET_SQL_PARAMETER'],
+      new Error(`violates ${constraintName}`),
+    );
+    const audit = app.get(AuditService);
+    const auditSpy = jest.spyOn(audit, 'record').mockRejectedValueOnce(databaseError);
+    const logSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    try {
+      const response = await owner(http.post(`/patients/${patientId}/tooth-records`))
+        .send({
+          toothNumber: 2,
+          recordType: 'finding',
+          conditionCode: 'caries',
+          note: requestSentinel,
+        })
+        .expect(500);
+
+      expect(response.body).toEqual({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: ['Internal server error'],
+      });
+      const responseText = JSON.stringify(response.body);
+      expect(responseText).not.toContain(sqlText);
+      expect(responseText).not.toContain(constraintName);
+      expect(responseText).not.toContain('SECRET_SQL_PARAMETER');
+      expect(responseText).not.toContain(requestSentinel);
+
+      const loggedError = logSpy.mock.calls.flat().join(' ');
+      expect(loggedError).toContain(sqlText);
+      expect(loggedError).toContain(constraintName);
+      expect(loggedError).not.toContain(requestSentinel);
+      expect(loggedError).not.toContain(ownerCookie);
+    } finally {
+      auditSpy.mockRestore();
+      logSpy.mockRestore();
+    }
   });
 });

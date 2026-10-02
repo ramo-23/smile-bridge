@@ -127,7 +127,8 @@ async function createAppointment(overrides: Record<string, unknown> = {}) {
 
 async function expectConflict(request: supertest.Test, message: string) {
   const response = await request.expect(409);
-  expect(response.body.message).toContain(message);
+  expect(Array.isArray(response.body.message)).toBe(true);
+  expect(response.body.message.join(' ')).toContain(message);
   expect(response.body.alternatives).toEqual(expect.any(Array));
   expect(response.body.alternatives.length).toBeLessThanOrEqual(3);
   return response;
@@ -279,6 +280,69 @@ describe('appointment scheduler', () => {
     expect(DateTime.fromISO(response.body.blockedUntil).diff(DateTime.fromISO(response.body.endsAt), 'minutes').minutes).toBe(10);
   });
 
+  it('returns appointment timestamps as ISO 8601 strings with the clinic timezone offset', async () => {
+    const response = await createAppointment({ startsAt: localTime('2026-01-05', '09:00') });
+    expect(response.body.startsAt).toMatch(/\+02:00$/);
+    expect(response.body.endsAt).toMatch(/\+02:00$/);
+    expect(response.body.blockedUntil).toMatch(/\+02:00$/);
+    expect(response.body.startsAt).not.toMatch(/Z$/);
+
+    const list = await owner(
+      http.get(
+        `/appointments?from=${encodeURIComponent(localTime('2026-01-05', '00:00'))}&to=${encodeURIComponent(localTime('2026-01-06', '00:00'))}`,
+      ),
+    ).expect(200);
+    expect(list.body[0].startsAt).toMatch(/\+02:00$/);
+
+    const fetched = await owner(http.get(`/appointments/${response.body.id}`)).expect(200);
+    expect(fetched.body.startsAt).toMatch(/\+02:00$/);
+  });
+
+  it('audits only the fields supplied in the request body for create, reschedule, and walk-in', async () => {
+    const created = await createAppointment({ startsAt: localTime('2026-01-05', '10:00') });
+    await owner(http.patch(`/appointments/${created.body.id}`))
+      .send({ startsAt: localTime('2026-01-05', '11:00') })
+      .expect(200);
+    setNow('2026-01-05T07:01:00Z');
+    await owner(http.post('/appointments/walk-in'))
+      .send({ patientId, providerId, treatmentTypeId })
+      .expect(201);
+
+    const rows = await testDataSource.query(
+      `SELECT action, metadata FROM audit_log
+       WHERE action IN ('appointment.create', 'appointment.update', 'appointment.walk_in')
+       ORDER BY id`,
+    );
+    const [createRow, updateRow, walkInRow] = rows;
+    expect([...createRow.metadata.changedFields].sort()).toEqual(
+      ['patientId', 'providerId', 'treatmentTypeId', 'startsAt'].sort(),
+    );
+    expect(updateRow.metadata.changedFields).toEqual(['startsAt']);
+    expect([...walkInRow.metadata.changedFields].sort()).toEqual(
+      ['patientId', 'providerId', 'treatmentTypeId'].sort(),
+    );
+  });
+
+  it('always returns message as an array of strings for 400, 403, and 409 responses', async () => {
+    const badRequest = await owner(http.post('/appointments')).send({}).expect(400);
+    expect(Array.isArray(badRequest.body.message)).toBe(true);
+    expect(badRequest.body.message.length).toBeGreaterThan(0);
+    for (const item of badRequest.body.message) expect(typeof item).toBe('string');
+
+    const forbidden = await http
+      .post('/appointments')
+      .set('Cookie', ownerCookie)
+      .send(appointmentBody())
+      .expect(403);
+    expect(Array.isArray(forbidden.body.message)).toBe(true);
+
+    await createAppointment({ startsAt: localTime('2026-01-05', '10:00') });
+    const conflict = await owner(http.post('/appointments'))
+      .send(appointmentBody({ startsAt: localTime('2026-01-05', '10:05') }))
+      .expect(409);
+    expect(Array.isArray(conflict.body.message)).toBe(true);
+  });
+
   it('rejects every slot rule with a clear conflict and at most three alternatives', async () => {
     await expectConflict(
       owner(http.post('/appointments')).send(appointmentBody({ startsAt: localTime('2026-01-05', '08:00') })),
@@ -349,6 +413,28 @@ describe('appointment scheduler', () => {
 
     await testDataSource.query('DELETE FROM clinic_settings');
     await expectConflict(owner(http.post('/appointments')).send(appointmentBody()), 'Clinic settings');
+  });
+
+  it('returns three alternatives spread at least 60 minutes apart that are all independently bookable', async () => {
+    await createAppointment({ startsAt: localTime('2026-01-05', '09:00') });
+    const response = await expectConflict(
+      owner(http.post('/appointments')).send(appointmentBody({ startsAt: localTime('2026-01-05', '09:10') })),
+      'appointment',
+    );
+    const alternatives = response.body.alternatives;
+    expect(alternatives.length).toBe(3);
+    for (let index = 1; index < alternatives.length; index += 1) {
+      const gap = DateTime.fromISO(alternatives[index].startsAt).diff(
+        DateTime.fromISO(alternatives[index - 1].startsAt),
+        'minutes',
+      ).minutes;
+      expect(gap).toBeGreaterThanOrEqual(60);
+    }
+    for (const slot of alternatives) {
+      const booked = await createAppointment({ startsAt: slot.startsAt });
+      expect(booked.status).toBe(201);
+      await testDataSource.query('DELETE FROM appointments');
+    }
   });
 
   it('allows exact end-buffer and previous blocked-until boundaries', async () => {
@@ -451,14 +537,14 @@ describe('appointment scheduler', () => {
       .send({ status: AppointmentStatus.Arrived })
       .expect(409)
       .expect(({ body }) =>
-        expect(body.message).toBe('A patient can only be marked as arrived on the day of the appointment'),
+        expect(body.message).toEqual(['A patient can only be marked as arrived on the day of the appointment']),
       );
     setNow(localTime('2026-01-06', '00:01'));
     await owner(http.post(statusUrl))
       .send({ status: AppointmentStatus.Arrived })
       .expect(409)
       .expect(({ body }) =>
-        expect(body.message).toBe('A patient can only be marked as arrived on the day of the appointment'),
+        expect(body.message).toEqual(['A patient can only be marked as arrived on the day of the appointment']),
       );
 
     const originalTimezone = process.env.TZ;
@@ -511,11 +597,11 @@ describe('appointment scheduler', () => {
     await owner(http.post('/appointments'))
       .send(appointmentBody({ durationMinutes: 45 }))
       .expect(409)
-      .expect(({ body }) => expect(body.message).toContain('reason'));
+      .expect(({ body }) => expect(body.message.join(' ')).toContain('reason'));
     await owner(http.post('/appointments'))
       .send(appointmentBody({ durationMinutes: 32, durationOverrideReason: 'Longer' }))
       .expect(409)
-      .expect(({ body }) => expect(body.message).toContain('5-minute grid'));
+      .expect(({ body }) => expect(body.message.join(' ')).toContain('5-minute grid'));
     const appointment = await createAppointment({
       startsAt: localTime('2026-01-05', '10:00'),
       durationMinutes: 45,

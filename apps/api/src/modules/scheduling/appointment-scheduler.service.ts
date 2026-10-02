@@ -108,16 +108,19 @@ export class AppointmentSchedulerService {
     if (filters.providerId) query.andWhere('provider.id = :providerId', { providerId: filters.providerId });
     if (filters.status) query.andWhere('appointment.status = :status', { status: filters.status });
     const rows = await query.orderBy('appointment.startsAt', 'ASC').addOrderBy('appointment.id', 'ASC').getMany();
-    return rows.map((appointment) => this.calendarView(appointment));
+    const timezone = await this.getTimezone();
+    return rows.map((appointment) => this.calendarView(appointment, timezone));
   }
 
   async getAppointment(id: string) {
     const appointment = await this.findAppointment(this.dataSource.manager, id);
-    return this.detailView(appointment);
+    const timezone = await this.getTimezone();
+    return this.detailView(appointment, timezone);
   }
 
   async create(dto: CreateAppointmentDto, actor: Actor) {
     const request = this.slotRequest(dto);
+    const suppliedFields = this.suppliedFields(dto as unknown as Record<string, unknown>);
     try {
       return await this.dataSource.transaction(async (manager) => {
         await this.lockProvider(manager, request.providerId);
@@ -138,9 +141,9 @@ export class AppointmentSchedulerService {
           'appointment.create',
           appointment.id,
           appointment.patient.id,
-          ['patientId', 'providerId', 'treatmentTypeId', 'startsAt', 'durationMinutes', 'notes'],
+          suppliedFields,
         );
-        return this.detailView(appointment);
+        return this.detailView(appointment, context.settings!.timezone);
       });
     } catch (error) {
       if (this.isExclusionViolation(error)) {
@@ -193,21 +196,9 @@ export class AppointmentSchedulerService {
         const validation = this.validateSlot(context, request);
         if (!validation.slot) throw this.slotConflict(validation.reason!, context, request);
 
-        const changedFields: string[] = [];
-        if (appointment.provider.id !== targetProviderId) {
+        if (appointment.provider.id !== targetProviderId)
           appointment.provider = { id: targetProviderId } as ProviderEntity;
-          changedFields.push('providerId');
-        }
-        if (appointment.startsAt.getTime() !== validation.slot.startsAt.toMillis())
-          changedFields.push('startsAt');
-        if (appointment.endsAt.getTime() !== validation.slot.endsAt.toMillis())
-          changedFields.push('durationMinutes');
-        if (appointment.durationOverrideReason !== validation.slot.durationOverrideReason)
-          changedFields.push('durationOverrideReason');
-        if (dto.notes !== undefined && appointment.notes !== dto.notes) {
-          appointment.notes = dto.notes ?? null;
-          changedFields.push('notes');
-        }
+        if (dto.notes !== undefined) appointment.notes = dto.notes ?? null;
         appointment.startsAt = validation.slot.startsAt.toUTC().toJSDate();
         appointment.endsAt = validation.slot.endsAt.toUTC().toJSDate();
         appointment.blockedUntil = validation.slot.blockedUntil.toUTC().toJSDate();
@@ -219,9 +210,9 @@ export class AppointmentSchedulerService {
           'appointment.update',
           saved.id,
           saved.patient.id,
-          changedFields,
+          requestedFields,
         );
-        return this.detailView(saved);
+        return this.detailView(saved, context.settings!.timezone);
       });
     } catch (error) {
       if (this.isExclusionViolation(error)) throw await this.exclusionConflict(request);
@@ -250,7 +241,8 @@ export class AppointmentSchedulerService {
         },
         manager,
       );
-      return this.detailView(saved);
+      const timezone = await this.getTimezone(manager);
+      return this.detailView(saved, timezone);
     });
   }
 
@@ -284,6 +276,7 @@ export class AppointmentSchedulerService {
         ? {}
         : { durationOverrideReason: dto.durationOverrideReason }),
     };
+    const suppliedFields = this.suppliedFields(dto as unknown as Record<string, unknown>);
 
     try {
       return await this.dataSource.transaction(async (manager) => {
@@ -305,9 +298,9 @@ export class AppointmentSchedulerService {
           'appointment.walk_in',
           appointment.id,
           appointment.patient.id,
-          ['patientId', 'providerId', 'treatmentTypeId', 'startsAt', 'durationMinutes', 'notes'],
+          suppliedFields,
         );
-        return this.detailView(appointment);
+        return this.detailView(appointment, context.settings!.timezone);
       });
     } catch (error) {
       if (this.isExclusionViolation(error)) throw await this.exclusionConflict(request);
@@ -532,9 +525,10 @@ export class AppointmentSchedulerService {
         context,
         { ...request, durationOverrideReason: request.durationOverrideReason || 'slot alternative' },
         request.startsAt,
-        request.startsAt.plus({ days: 60 }),
+        request.startsAt.plus({ days: 14 }),
         3,
         true,
+        60,
       ),
     });
   }
@@ -546,6 +540,7 @@ export class AppointmentSchedulerService {
     until: DateTime,
     count = 3,
     strictlyAfter = false,
+    minGapMinutes = 0,
   ) {
     if (!context.settings || !context.provider?.isActive || !context.treatment?.isActive)
       return [];
@@ -553,6 +548,7 @@ export class AppointmentSchedulerService {
     const firstDate = from.setZone(timezone).startOf('day');
     const lastDate = until.setZone(timezone).startOf('day');
     const slots: Array<{ startsAt: string; endsAt: string }> = [];
+    let lastStart: DateTime | null = null;
     const dateCount = Math.min(61, Math.ceil(lastDate.diff(firstDate, 'days').days) + 1);
     for (let dayIndex = 0; dayIndex < dateCount && slots.length < count; dayIndex += 1) {
       const date = firstDate.plus({ days: dayIndex });
@@ -572,12 +568,14 @@ export class AppointmentSchedulerService {
           );
           if (!candidate || candidate < from || (strictlyAfter && candidate <= from) || candidate >= until)
             continue;
+          if (lastStart && candidate.diff(lastStart, 'minutes').minutes < minGapMinutes) continue;
           const validation = this.validateSlot(context, { ...request, startsAt: candidate });
           if (validation.slot) {
             slots.push({
               startsAt: validation.slot.startsAt.toISO({ suppressMilliseconds: true })!,
               endsAt: validation.slot.endsAt.toISO({ suppressMilliseconds: true })!,
             });
+            lastStart = validation.slot.startsAt;
           }
         }
       }
@@ -771,27 +769,40 @@ export class AppointmentSchedulerService {
     );
   }
 
-  private calendarView(appointment: AppointmentEntity) {
+  private calendarView(appointment: AppointmentEntity, timezone: string) {
     return {
       id: appointment.id,
       patientId: appointment.patient.id,
       patientName: `${appointment.patient.firstName} ${appointment.patient.lastName}`,
       treatmentName: appointment.treatmentType.name,
       providerId: appointment.provider.id,
-      startsAt: appointment.startsAt.toISOString(),
-      endsAt: appointment.endsAt.toISOString(),
-      blockedUntil: appointment.blockedUntil.toISOString(),
+      startsAt: this.formatInZone(appointment.startsAt, timezone),
+      endsAt: this.formatInZone(appointment.endsAt, timezone),
+      blockedUntil: this.formatInZone(appointment.blockedUntil, timezone),
       status: appointment.status,
       source: appointment.source,
     };
   }
 
-  private detailView(appointment: AppointmentEntity) {
+  private detailView(appointment: AppointmentEntity, timezone: string) {
     return {
-      ...this.calendarView(appointment),
+      ...this.calendarView(appointment, timezone),
       treatmentTypeId: appointment.treatmentType.id,
       durationOverrideReason: appointment.durationOverrideReason,
       notes: appointment.notes,
     };
+  }
+
+  private formatInZone(date: Date, timezone: string): string {
+    return DateTime.fromJSDate(date, { zone: 'utc' }).setZone(timezone).toISO({ suppressMilliseconds: true })!;
+  }
+
+  private async getTimezone(manager: EntityManager = this.dataSource.manager): Promise<string> {
+    const settings = await manager.getRepository(ClinicSettingEntity).findOne({ where: { id: true } });
+    return settings?.timezone ?? 'UTC';
+  }
+
+  private suppliedFields(dto: Record<string, unknown>): string[] {
+    return Object.keys(dto).filter((field) => dto[field] !== undefined);
   }
 }

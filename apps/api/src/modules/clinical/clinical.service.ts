@@ -110,12 +110,13 @@ export class ClinicalService {
 			);
 			if (!record) throw new NotFoundException('Tooth record not found');
 			if (record.voidedAt) throw new ConflictException('Tooth record has already been voided');
-			const [updated] = await manager.query(
+			const [rows] = await manager.query(
 				`UPDATE tooth_records SET voided_at = now(), void_reason = $2
 				 WHERE id = $1 AND voided_at IS NULL
 				 RETURNING id, voided_at AS "voidedAt", void_reason AS "voidReason"`,
 				[recordId, reason.trim()],
 			);
+			const updated = rows[0];
 			await this.recordAudit(
 				manager,
 				actor,
@@ -200,6 +201,7 @@ export class ClinicalService {
 				.getMany();
 			await this.recordAudit(manager, actor, 'clinical.tooth_history.view', patientId, null, {
 				patientId,
+				toothNumber,
 			});
 			return records.map((record) => this.toothRecordView(record, true));
 		});

@@ -170,11 +170,11 @@ export class ProvidersService {
 	async deleteBlockedPeriod(id: string, blockId: string, actor: Actor) {
 		return this.dataSource.transaction(async (manager) => {
 			await this.requireProvider(manager, id);
-			const [deleted] = await manager.query(
+			const [rows] = await manager.query(
 				'DELETE FROM blocked_periods WHERE id = $1 AND provider_id = $2 RETURNING id',
 				[blockId, id],
 			);
-			if (!deleted) throw new NotFoundException('Blocked period not found');
+			if (!rows[0]) throw new NotFoundException('Blocked period not found');
 			await this.record(manager, actor, 'blocked_period.delete', blockId, ['blockedPeriodId']);
 			return { id: blockId, deleted: true };
 		});

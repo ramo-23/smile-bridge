@@ -181,14 +181,14 @@ describe('patients module', () => {
     await asUser(ownerCookie, http.post('/patients'))
       .send(patientBody({ phone: 'not a phone' }))
       .expect(400)
-      .expect(({ body }) => expect(body.message).toContain('Invalid phone number'));
+      .expect(({ body }) => expect(body.message.join(' ')).toContain('Invalid phone number'));
     await asUser(ownerCookie, http.post('/patients'))
       .send({ firstName: 'Only a name' })
       .expect(400);
     await asUser(ownerCookie, http.post('/patients'))
       .send(patientBody({ dateOfBirth: '2015-01-01' }))
       .expect(400)
-      .expect(({ body }) => expect(body.message).toContain('Guardian name and phone'));
+      .expect(({ body }) => expect(body.message.join(' ')).toContain('Guardian name and phone'));
     await createPatient({
       dateOfBirth: '2015-01-01',
       guardianName: 'Parent Molefe',
@@ -300,7 +300,7 @@ describe('patients module', () => {
         dateOfBirth: birthDateForBirthday(tomorrow),
       }))
       .expect(400)
-      .expect(({ body }) => expect(body.message).toContain('Guardian name and phone'));
+      .expect(({ body }) => expect(body.message.join(' ')).toContain('Guardian name and phone'));
     await createPatient({
       firstName: 'Minor',
       dateOfBirth: birthDateForBirthday(tomorrow),

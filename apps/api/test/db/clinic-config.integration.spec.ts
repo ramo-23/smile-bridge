@@ -284,10 +284,10 @@ describe('clinic configuration', () => {
     const saved = await withSession(ownerCookie, http.put('/settings'))
       .send(settingsBody())
       .expect(200);
+    expect(saved.body).not.toHaveProperty('id');
     expect(saved.body).toMatchObject({
-      id: true,
       clinicName: 'Maseru Dental',
-      phoneE164: '+26658123456',
+      phone: '+26658123456',
       timezone: 'Africa/Maseru',
       currencyCode: 'LSL',
     });
@@ -422,6 +422,8 @@ describe('clinic configuration', () => {
     const remaining = await withSession(ownerCookie, http.get(path)).expect(200);
     expect(remaining.body).toHaveLength(1);
     expect(remaining.body[0].reason).toBeNull();
+    await withSession(ownerCookie, http.delete(`${path}/${blocked.body.id}`)).expect(404);
+    await withSession(ownerCookie, http.delete(`${path}/${randomUUID()}`)).expect(404);
   });
 
   it('writes exactly one audit row per configuration mutation with field names only', async () => {
@@ -466,7 +468,7 @@ describe('clinic configuration', () => {
       'settings.update': [
         'clinicName',
         'address',
-        'phoneE164',
+        'phone',
         'timezone',
         'currencyCode',
         'bufferMinutes',

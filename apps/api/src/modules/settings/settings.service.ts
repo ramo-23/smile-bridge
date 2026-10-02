@@ -8,6 +8,27 @@ import { ClinicSettingEntity } from './entities/clinic-setting.entity';
 
 type Actor = { userId: string; ip: string | null };
 
+export type ClinicSettingsResponse = {
+  clinicName: string;
+  address: string | null;
+  phone: string | null;
+  timezone: string;
+  currencyCode: string;
+  bufferMinutes: number;
+  reminderHoursBefore: number;
+  updatedAt: Date;
+};
+
+const AUDIT_FIELD_NAMES = {
+  clinicName: 'clinicName',
+  address: 'address',
+  phoneE164: 'phone',
+  timezone: 'timezone',
+  currencyCode: 'currencyCode',
+  bufferMinutes: 'bufferMinutes',
+  reminderHoursBefore: 'reminderHoursBefore',
+} as const;
+
 @Injectable()
 export class SettingsService {
   constructor(
@@ -17,11 +38,12 @@ export class SettingsService {
     private readonly audit: AuditService,
   ) {}
 
-  async get(): Promise<ClinicSettingEntity | { configured: false }> {
-    return (await this.settings.findOne({ where: { id: true } })) ?? { configured: false };
+  async get(): Promise<ClinicSettingsResponse | { configured: false }> {
+    const setting = await this.settings.findOne({ where: { id: true } });
+    return setting ? this.toResponse(setting) : { configured: false };
   }
 
-  async update(dto: UpdateClinicSettingsDto, actor: Actor): Promise<ClinicSettingEntity> {
+  async update(dto: UpdateClinicSettingsDto, actor: Actor): Promise<ClinicSettingsResponse> {
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: dto.timezone });
     } catch {
@@ -43,9 +65,9 @@ export class SettingsService {
       const current = await repository.findOne({ where: { id: true } });
       const setting = repository.create({ ...current, id: true, ...values, updatedAt: new Date() });
       const saved = await repository.save(setting);
-      const changedFields = (Object.keys(values) as Array<keyof typeof values>).filter(
-        (field) => current?.[field] !== values[field],
-      );
+      const changedFields = (Object.keys(values) as Array<keyof typeof values>)
+        .filter((field) => current?.[field] !== values[field])
+        .map((field) => AUDIT_FIELD_NAMES[field]);
       await this.audit.record(
         {
           userId: actor.userId,
@@ -58,7 +80,21 @@ export class SettingsService {
         },
         manager,
       );
-      return saved;
+      return this.toResponse(saved);
     });
   }
+
+  private toResponse(setting: ClinicSettingEntity): ClinicSettingsResponse {
+    return {
+      clinicName: setting.clinicName,
+      address: setting.address,
+      phone: setting.phoneE164,
+      timezone: setting.timezone,
+      currencyCode: setting.currencyCode,
+      bufferMinutes: setting.bufferMinutes,
+      reminderHoursBefore: setting.reminderHoursBefore,
+      updatedAt: setting.updatedAt,
+    };
+  }
 }
+

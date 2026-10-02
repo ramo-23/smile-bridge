@@ -195,7 +195,7 @@ describe('authentication, authorization, and audit', () => {
     ]);
     for (const response of responses) {
       expect(response.status).toBe(401);
-      expect(response.body.message).toBe('Invalid email or password');
+      expect(response.body.message).toEqual(['Invalid email or password']);
     }
   });
 
