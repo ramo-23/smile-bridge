@@ -5,10 +5,13 @@ import {
   ArrayUnique,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -106,4 +109,39 @@ export class InvoiceListQueryDto {
   @Min(1)
   @Max(50)
   pageSize = 20;
+}
+
+export class CreatePaymentDto {
+  @IsIn(['cash', 'card'])
+  method!: 'cash' | 'card';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(MAX_CENTS)
+  amountCents!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reference?: string;
+}
+
+export class CreateCreditNoteDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(MAX_CENTS)
+  amountCents!: number;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  reason!: string;
+}
+
+export class CashUpQueryDto {
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
+  date!: string;
 }

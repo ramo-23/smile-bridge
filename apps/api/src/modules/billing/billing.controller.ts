@@ -15,6 +15,9 @@ import { UserRole } from '../../database/enums';
 import { BillingService } from './billing.service';
 import {
   AddInvoiceLineDto,
+  CashUpQueryDto,
+  CreateCreditNoteDto,
+  CreatePaymentDto,
   CreateInvoiceDto,
   CreatePerformedTreatmentDto,
   InvoiceListQueryDto,
@@ -102,6 +105,30 @@ export class BillingController {
   @Delete('invoices/:id')
   deleteInvoice(@Param('id', new ParseUUIDPipe()) id: string, @Req() request: AuthenticatedRequest) {
     return this.billing.deleteInvoice(id, this.actor(request));
+  }
+
+  @Post('invoices/:id/payments')
+  createPayment(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: CreatePaymentDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.billing.createPayment(id, body, this.actor(request));
+  }
+
+  @Post('invoices/:id/credit-notes')
+  @Roles(UserRole.DentistOwner)
+  createCreditNote(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: CreateCreditNoteDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.billing.createCreditNote(id, body, this.actor(request));
+  }
+
+  @Get('reports/cash-up')
+  cashUp(@Query() query: CashUpQueryDto, @Req() request: AuthenticatedRequest) {
+    return this.billing.cashUp(query.date, this.actor(request));
   }
 
   private actor(request: AuthenticatedRequest) {

@@ -8,7 +8,7 @@
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
     "test": "jest --passWithNoTests",
-    "test:db": "jest --config jest.db.config.cjs --runInBand",
+    "test:db": "node scripts/run-db-tests.cjs",
     "migration:run": "typeorm-ts-node-commonjs -d src/database/data-source.ts migration:run",
     "migration:revert": "typeorm-ts-node-commonjs -d src/database/data-source.ts migration:revert",
     "migration:generate": "typeorm-ts-node-commonjs -d src/database/data-source.ts migration:generate",

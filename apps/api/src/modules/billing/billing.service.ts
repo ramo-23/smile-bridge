@@ -9,7 +9,7 @@ import { DateTime } from 'luxon';
 import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import { AppointmentStatus, UserRole } from '../../database/enums';
 import { AuditService } from '../audit/audit.service';
-import { AddInvoiceLineDto, CreateInvoiceDto, CreatePerformedTreatmentDto, InvoiceListQueryDto } from './dto/billing.dto';
+import { AddInvoiceLineDto, CashUpQueryDto, CreateCreditNoteDto, CreateInvoiceDto, CreatePaymentDto, CreatePerformedTreatmentDto, InvoiceListQueryDto } from './dto/billing.dto';
 import {
   INVOICE_FINANCIALS_SQL,
   loadInvoiceFinancials,
@@ -410,6 +410,137 @@ export class BillingService {
       [invoiceId, treatment.id, treatment.name, treatment.procedure_code, treatment.tooth_number, treatment.price_cents],
     );
     return line.id;
+  }
+
+  private async lockIssuedInvoice(manager: EntityManager, invoiceId: string): Promise<Row> {
+    const [invoice] = await manager.query(
+      'SELECT id, patient_id, status, total_cents FROM invoices WHERE id = $1 FOR UPDATE',
+      [invoiceId],
+    );
+    if (!invoice) throw new NotFoundException('Invoice not found');
+    if (invoice.status !== 'issued') throw new ConflictException('Only issued invoices accept payments and credit notes');
+    return invoice;
+  }
+
+  async createPayment(invoiceId: string, dto: CreatePaymentDto, actor: Actor) {
+    return this.dataSource.transaction(async (manager) => {
+      const invoice = await this.lockIssuedInvoice(manager, invoiceId);
+      const before = await loadInvoiceFinancials(manager, invoiceId);
+      const balance = before.balanceCents ?? 0;
+      if (dto.amountCents > balance) {
+        throw new ConflictException(`Payment exceeds the current balance of ${Math.max(balance, 0)} cents`);
+      }
+      const [payment] = await manager.query(
+        `INSERT INTO payments (invoice_id, method, amount_cents, received_by, reference)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id, method, amount_cents, paid_at, reference`,
+        [invoiceId, dto.method, dto.amountCents, actor.userId, dto.reference?.trim() || null],
+      );
+      await this.recordAudit(manager, actor, 'billing.payment.create', invoice.patient_id, payment.id, {
+        invoiceId,
+        paymentId: payment.id,
+      });
+      return {
+        id: payment.id as string,
+        invoiceId,
+        method: payment.method as string,
+        amountCents: Number(payment.amount_cents),
+        paidAt: payment.paid_at as Date,
+        reference: payment.reference as string | null,
+        currencyCode: await this.currencyCode(manager),
+        invoice: await this.financialSummary(manager, invoiceId),
+      };
+    });
+  }
+
+  async createCreditNote(invoiceId: string, dto: CreateCreditNoteDto, actor: Actor) {
+    return this.dataSource.transaction(async (manager) => {
+      const invoice = await this.lockIssuedInvoice(manager, invoiceId);
+      const financials = await loadInvoiceFinancials(manager, invoiceId);
+      const creditable = Number(invoice.total_cents) - financials.creditedCents;
+      if (dto.amountCents > creditable) {
+        throw new ConflictException(`Credit exceeds the creditable remainder of ${creditable} cents`);
+      }
+      // Same lock order as invoice issue: invoice row first, then the counter row.
+      const [counter] = await manager.query(
+        `SELECT last_value FROM document_counters WHERE name = 'credit_note' FOR UPDATE`,
+      );
+      if (!counter) throw new InternalServerErrorException('Credit note counter is not initialised');
+      const next = Number(counter.last_value) + 1;
+      await manager.query(`UPDATE document_counters SET last_value = $1 WHERE name = 'credit_note'`, [next]);
+      const [note] = await manager.query(
+        `INSERT INTO credit_notes (credit_note_number, invoice_id, amount_cents, reason, created_by)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id, credit_note_number, amount_cents, reason, created_at`,
+        [`CN-${String(next).padStart(6, '0')}`, invoiceId, dto.amountCents, dto.reason, actor.userId],
+      );
+      await this.recordAudit(manager, actor, 'billing.credit_note.create', invoice.patient_id, note.id, {
+        invoiceId,
+        creditNoteId: note.id,
+      });
+      return {
+        id: note.id as string,
+        creditNoteNumber: note.credit_note_number as string,
+        invoiceId,
+        amountCents: Number(note.amount_cents),
+        reason: note.reason as string,
+        createdAt: note.created_at as Date,
+        currencyCode: await this.currencyCode(manager),
+        invoice: await this.financialSummary(manager, invoiceId),
+      };
+    });
+  }
+
+  async cashUp(date: string, actor: Actor) {
+    return this.dataSource.transaction(async (manager) => {
+      const [settings] = await manager.query('SELECT timezone, currency_code FROM clinic_settings WHERE id');
+      const zone: string = settings?.timezone ?? 'UTC';
+      const start = DateTime.fromISO(date, { zone });
+      if (!start.isValid) throw new BadRequestException('date is not a valid date');
+      const end = start.plus({ days: 1 }).startOf('day');
+      const range = [start.startOf('day').toUTC().toISO(), end.toUTC().toISO()];
+      const byMethod: Row[] = await manager.query(
+        `SELECT method, COALESCE(SUM(amount_cents), 0)::bigint AS total, COUNT(*)::int AS count
+           FROM payments WHERE paid_at >= $1 AND paid_at < $2 GROUP BY method ORDER BY method`,
+        range,
+      );
+      const byUser: Row[] = await manager.query(
+        `SELECT p.received_by AS user_id, u.full_name, SUM(p.amount_cents)::bigint AS total, COUNT(*)::int AS count
+           FROM payments p JOIN users u ON u.id = p.received_by
+          WHERE p.paid_at >= $1 AND p.paid_at < $2
+          GROUP BY p.received_by, u.full_name ORDER BY u.full_name, p.received_by`,
+        range,
+      );
+      await this.audit.record(
+        {
+          userId: actor.userId,
+          action: 'billing.cash_up.view',
+          entityType: 'billing',
+          entityId: null,
+          patientId: null,
+          ip: actor.ip,
+          metadata: { fieldNames: ['date'] },
+        },
+        manager,
+      );
+      return {
+        date,
+        timezone: zone,
+        currencyCode: (settings?.currency_code as string | undefined) ?? null,
+        byMethod: byMethod.map((r) => ({ method: r.method, totalCents: Number(r.total), count: r.count })),
+        byUser: byUser.map((r) => ({
+          userId: r.user_id,
+          fullName: r.full_name,
+          totalCents: Number(r.total),
+          count: r.count,
+        })),
+        grandTotalCents: byMethod.reduce((sum, r) => sum + Number(r.total), 0),
+        paymentCount: byMethod.reduce((sum, r) => sum + r.count, 0),
+      };
+    });
+  }
+
+  private async financialSummary(manager: EntityManager, invoiceId: string) {
+    const f = await loadInvoiceFinancials(manager, invoiceId);
+    return { id: invoiceId, ...f };
   }
 
   private async lockDraftInvoice(manager: EntityManager, invoiceId: string): Promise<Row> {
